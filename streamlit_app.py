@@ -28,6 +28,7 @@ Usage:
 # ── stdlib ──────────────────────────────────────────────────────────────────
 import difflib
 import io
+import os
 import random
 import re
 import unicodedata
@@ -41,6 +42,7 @@ from transformers import pipeline
 
 # ── local ───────────────────────────────────────────────────────────────────
 from quran_data import load_quran
+from download_quran_data import download_all as download_quran_files
 import db
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -237,7 +239,32 @@ def load_asr_pipeline():
 
 @st.cache_resource(show_spinner="Loading Quran text …")
 def load_quran_data():
-    return load_quran(QURANJSON_ROOT_DIR)
+    # Self-heal: quran_repo/json/surahs is NOT committed to the repo (114
+    # JSON files, not worth version-controlling) and does not survive a
+    # fresh Streamlit Cloud deploy, a redeploy, or a wake-from-sleep — the
+    # filesystem is ephemeral outside of what's in the git repo. Previously
+    # this was only ever run manually in Colab, which is why a fresh deploy
+    # crashed with FileNotFoundError before any UI ever rendered. Downloading
+    # is idempotent (download_all() skips files that already exist), so
+    # this is cheap on every warm start and only does real work once per
+    # fresh filesystem.
+    if not os.path.isdir(QURANJSON_ROOT_DIR) or not os.listdir(QURANJSON_ROOT_DIR):
+        try:
+            download_quran_files(QURANJSON_ROOT_DIR)
+        except Exception as exc:
+            st.error(
+                "Could not download Quran text data on startup "
+                f"({exc}). This usually means the deployment environment "
+                "has no outbound internet access to cdn.jsdelivr.net — "
+                "check your host's network/egress settings."
+            )
+            st.stop()
+
+    try:
+        return load_quran(QURANJSON_ROOT_DIR)
+    except FileNotFoundError as exc:
+        st.error(f"Quran text data is missing or unreadable: {exc}")
+        st.stop()
 
 
 # ════════════════════════════════════════════════════════════════════════════
